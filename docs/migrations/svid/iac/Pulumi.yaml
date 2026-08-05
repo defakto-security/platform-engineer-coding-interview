@@ -1,0 +1,41 @@
+name: svid-migration
+runtime: go
+description: >
+  Phased migration of the CI/CD deploy pipeline's Kubernetes auth from a static
+  long-lived kubeconfig to Defakto short-lived JWT-SVIDs, gated by the `phase`
+  config value (0-4). See ../README.md for the phase narrative and assumptions.
+
+config:
+  phase:
+    description: Migration phase to converge to (0=preflight, 1=establish trust, 2=shadow, 3=cutover, 4=decommission).
+    default: 0
+  githubOrg:
+    description: GitHub organization owning the deploy repo.
+    default: acme-platform
+  githubRepo:
+    description: Repository whose workflow is being migrated.
+    default: checkout-service
+  githubWorkflow:
+    description: Workflow file name that performs the deploy (used for file/run lookups, not for claim matching).
+    default: deploy.yml
+  githubWorkflowName:
+    description: The deploy workflow's `name:` value. GitHub's OIDC `workflow` claim carries the display name, not the file name, so this - not githubWorkflow - is what the trust conditions match on.
+    default: deploy
+  githubEnvironment:
+    description: GitHub Actions environment the deploy job runs under (narrows the OIDC subject claim).
+    default: production
+  k8sNamespace:
+    description: Namespace containing the legacy CI service account.
+    default: ci
+  existingClusterRoleName:
+    description: Pre-existing ClusterRole the pipeline is authorized against. Not managed by this stack - only its name is referenced.
+    default: ci-deployer
+  defaktoTrustDomain:
+    description: Defakto SPIFFE trust domain this pipeline's identities are issued under.
+    default: acme.defakto.id
+  legacyGithubSecretName:
+    description: Name (not value) of the GitHub Actions secret holding the static kubeconfig, deleted in phase 4.
+    default: KUBE_DEPLOY_KUBECONFIG
+  defaktoApiToken:
+    description: API token for Defakto's control-plane API, used only by the phase>=1 federation-source command.
+    secret: true

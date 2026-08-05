@@ -1,0 +1,25 @@
+# BEFORE: current state (phase 0). Not applied by anything in iac/ - shown
+# for context only, so the diff to deploy-after.yml is legible in review.
+name: deploy
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      # The long-lived credential this whole migration exists to remove.
+      # KUBECONFIG here embeds a static ServiceAccount token with no
+      # expiry tied to this workflow's lifecycle - it's valid until
+      # someone remembers to rotate it.
+      - name: Write kubeconfig
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "${{ secrets.KUBE_DEPLOY_KUBECONFIG }}" | base64 -d > "$HOME/.kube/config"
+
+      - name: Deploy
+        run: kubectl apply -f k8s/

@@ -1,0 +1,65 @@
+# AFTER: post phase-3 cutover. Not applied by anything in iac/ - shown for
+# context only. Diff against deploy-before.yml is the point: no long-lived
+# secret, and the SVID exchange failing must fail the job (no fallback).
+name: deploy
+on:
+  push:
+    branches: [main]
+
+permissions:
+  # This is the only "credential" GitHub grants the job for free - a
+  # short-lived, repo/workflow-scoped OIDC ID token. Nothing used it before
+  # this migration.
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      # Exchanges the GitHub OIDC ID token for a short-lived JWT-SVID scoped
+      # to this repo/workflow/environment. `defakto-cli` stands in for
+      # whatever Defakto's real GitHub Action/CLI is - see README.md
+      # assumption 2: this call is a runtime data-plane operation against
+      # Defakto's RemoteWorkloadAPI, not something Pulumi provisions.
+      #
+      # `set -e` (default for `run:` steps) means a failed exchange fails
+      # this step, which fails the job - by design, per the objective's
+      # "consistency over availability" priority. There is deliberately no
+      # `continue-on-error` and no fallback to a stored credential.
+      - name: Exchange GitHub OIDC token for a JWT-SVID
+        id: svid
+        run: |
+          token=$(defakto-cli fetch-svid \
+            --trust-domain acme.defakto.id \
+            --audience k8s.acme.defakto.id)
+          # Short-lived, but still a bearer credential: mask it before it
+          # reaches a step output, or any later `set -x`/error trace prints
+          # it into the run log verbatim.
+          echo "::add-mask::${token}"
+          echo "token=${token}" >> "$GITHUB_OUTPUT"
+
+      # Inline version of validate/phase3.go's PreDeployGate: fail hard,
+      # before touching the cluster, if the token doesn't actually
+      # authenticate. Belt-and-suspenders with the exchange step above
+      # failing on its own - this catches the case where the exchange
+      # "succeeded" but produced a token the API server won't accept
+      # (e.g. clock skew, JWKS not yet propagated after phase 1).
+      #
+      # `validate` is its own Go module, so the gate runs from that module's
+      # directory - `go run ./validate` from the repo root would not resolve.
+      - name: Pre-deploy auth gate
+        env:
+          CI_SVID_TOKEN: ${{ steps.svid.outputs.token }}
+        working-directory: docs/migrations/svid/validate
+        run: go run . phase3-gate
+
+      - name: Deploy
+        env:
+          KUBE_TOKEN: ${{ steps.svid.outputs.token }}
+        run: |
+          kubectl --token="$KUBE_TOKEN" --server=https://kube-apiserver.internal:6443 \
+            apply -f k8s/
