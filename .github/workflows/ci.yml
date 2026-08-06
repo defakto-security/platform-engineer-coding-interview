@@ -6,6 +6,9 @@ on:
 
 jobs:
   make:
+    # Job name doubles as the status-check context required by the
+    # "PR Required" ruleset — keep it in sync if you rename it.
+    name: CI
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
